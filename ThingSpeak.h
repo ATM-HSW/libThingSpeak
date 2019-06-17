@@ -29,8 +29,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "mbed.h"
-#include "time.h"
-#include "WString.h"
+#include "arduino_WString.h"
 #include "http_request.h"
 
 #define THINGSPEAK_URL "api.thingspeak.com"
