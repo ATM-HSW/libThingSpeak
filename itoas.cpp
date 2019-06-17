@@ -82,7 +82,7 @@ char* itoa( int value, char *string, int radix )
   return ltoa( value, string, radix ) ;
 }
 
-char* utoa( unsigned long value, char *string, int radix )
+char* _utoa( unsigned long value, char *string, int radix )
 {
   return ultoa( value, string, radix ) ;
 }

@@ -3,7 +3,7 @@
 
 #include "cstdlib"
 
-char* utoa( unsigned long value, char *string, int radix );
+char* _utoa( unsigned long value, char *string, int radix );
 char* itoa( int value, char *string, int radix );
 char* ultoa( unsigned long value, char *string, int radix );
 char* ltoa( long value, char *string, int radix );
