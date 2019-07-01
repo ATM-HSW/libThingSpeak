@@ -27,70 +27,85 @@ The library includes several <a href="http://github.com/mathworks/thingspeak-ard
 
 * **ReadField:** Reading from a channel on ThingSpeak (own channel has to be configured).
 * **ReadWeatherStation:** Reading weather station data from Mathwork's headquarter weather channel (public channel)
-* **WriteSingleField:** Writing a value to a single field on ThingSpeak (own channel has to be configured).
+* **WriteField:** Writing a value to a single field on ThingSpeak (own channel has to be configured).
 * **WriteChannel:** Writing values to multiple fields of a channel on ThingSpeak (own channel has to be configured).
 
 ## <a id="typical_write">Typical Write Example</a>
 In this case, write to a field with an incrementing number.   
 
 ```
+#include "mbed.h"
+#include "EthernetInterface.h"
+
+#include "arduino_WString.h"
+#include "secrets.h"
+//#define THINGSPEAK_DBG_MSG
+//#define THINGSPEAK_DBG_HTTP
 #include "ThingSpeak.h"
-#include <ESP8266WiFi.h>
 
-//----------------  Fill in your credentails   ---------------------
-char ssid[] = "MySSID";             // your network SSID (name) 
-char pass[] = "MyPassword";         // your network password
-unsigned long myChannelNumber = 0;  // Replace the 0 with your channel number
-const char * myWriteAPIKey = "";    // Paste your ThingSpeak Write API Key between the quotes 
-//------------------------------------------------------------------
+Serial pc(USBTX, USBRX);
+NetworkInterface *net;
+ThingSpeak thingSpeak;
+TCPSocket socket;
 
-WiFiClient  client;
+nsapi_size_or_error_t result;
 
-int number = 0;
+int setup() {
+#ifdef MBED_MAJOR_VERSION
+  pc.printf("Mbed OS version: %d.%d.%d\n\n", MBED_MAJOR_VERSION, MBED_MINOR_VERSION, MBED_PATCH_VERSION);
+#endif
 
-void setup() {
-  //Initialize serial and wait for port to open:
-  Serial.begin(9600);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
+  net = new EthernetInterface();
+  if (!net) {
+      pc.printf("Error! No network inteface found.\n");
+      return -1;
   }
 
-  WiFi.mode(WIFI_STA);
-  ThingSpeak.begin(client); 
+  result = net->connect();
+  if (result != 0) {
+      pc.printf("Error! net->connect() returned: %d\n", result);
+      return result;
+  }
+
+  nsapi_error_t open_result = socket.open(net);
+  if (open_result != 0) {
+      pc.printf("Error! socket.open(net) returned: %d\n", open_result);
+      return open_result;
+  }
+
+  thingSpeak.setSerial(&pc);
+  thingSpeak.begin(&socket);  // Initialize ThingSpeak
+
+  return 0;
 }
 
 void loop() {
+  static uint8_t number=0;
 
-  // Connect or reconnect to WiFi
-  if(WiFi.status() != WL_CONNECTED){
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(SECRET_SSID);
-    while(WiFi.status() != WL_CONNECTED){
-      WiFi.begin(ssid, pass);
-      Serial.print(".");
-      delay(5000);     
-    } 
-    Serial.println("\nConnected.");
-  }
-  
   // Write to ThingSpeak. There are up to 8 fields in a channel, allowing you to store up to 8 different
   // pieces of information in a channel.  Here, we write to field 1.
-  int x = ThingSpeak.writeField(myChannelNumber, 1, number, myWriteAPIKey);
-  
-  // Check the return code
+  int x = thingSpeak.writeField(SECRET_CH_ID, 1, number, SECRET_WRITE_APIKEY);
   if(x == 200){
-    Serial.println("Channel update successful.");
+    pc.printf("Channel update successful.\n");
   }
   else{
-    Serial.println("Problem updating channel. HTTP error code " + String(x));
+    pc.printf("Problem updating channel. HTTP error code %d\n",x);
   }
 
+  // change the value
   number++;
   if(number > 99){
     number = 0;
   }
-  
-  delay(20000); // Wait 20 seconds before sending a new value
+
+  wait(20); // Wait 20 seconds to update the channel again
+}
+
+int main() {
+  if(setup() == 0) 
+    while(true) loop();
+  else
+    while(true) wait(1);
 }
 ```
 
@@ -98,78 +113,95 @@ void loop() {
 In this case, read from a public channel and a private channel with an ESP8266.  The public channel is the temperature(F) at MathWorks headquarters.  The private channel is a counter that increments.
 
  ```
+#include "mbed.h"
+#include "EthernetInterface.h"
+#include "arduino_WString.h"
+#include "secrets.h"
+//#define THINGSPEAK_DBG_MSG
+//#define THINGSPEAK_DBG_HTTP
 #include "ThingSpeak.h"
-#include <ESP8266WiFi.h>
 
-//----------------  Fill in your credentails   ---------------------
-char ssid[] = "MySSID";     // your network SSID (name) 
-char pass[] = "MyPassword"; // your network password
-//------------------------------------------------------------------
+Serial pc(USBTX, USBRX);
+NetworkInterface *net;
+ThingSpeak thingSpeak;
+TCPSocket socket;
 
-WiFiClient  client;
-
-unsigned long weatherStationChannelNumber = 12397;
+// Weather station channel details
+unsigned long weatherStationChannelNumber = SECRET_CH_ID_WEATHER_STATION;
 unsigned int temperatureFieldNumber = 4;
 
-unsigned long counterChannelNumber = 298725;
-const char * myCounterReadAPIKey = "SODG0O2UZVGKWAWG";
-unsigned int counterFieldNumber = 1; 
+// Counting channel details
+unsigned long counterChannelNumber = SECRET_CH_ID_COUNTER;
+const char * myCounterReadAPIKey = SECRET_READ_APIKEY_COUNTER;
+unsigned int counterFieldNumber = 1;
+nsapi_size_or_error_t result;
 
-void setup() {
-  //Initialize serial and wait for port to open:
-  Serial.begin(9600);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
+int setup() {
+#ifdef MBED_MAJOR_VERSION
+  pc.printf("Mbed OS version: %d.%d.%d\n\n", MBED_MAJOR_VERSION, MBED_MINOR_VERSION, MBED_PATCH_VERSION);
+#endif
+
+  net = new EthernetInterface();
+  if (!net) {
+      pc.printf("Error! No network interface found.\n");
+      return -1;
   }
 
-  WiFi.mode(WIFI_STA);  
-  ThingSpeak.begin(client);
+  result = net->connect();
+  if (result != 0) {
+      pc.printf("Error! net->connect() returned: %d\n", result);
+      return result;
+  }
+
+  nsapi_error_t open_result = socket.open(net);
+  if (open_result != 0) {
+      pc.printf("Error! socket.open(net) returned: %d\n", open_result);
+      return open_result;
+  }
+
+  thingSpeak.setSerial(&pc);
+  thingSpeak.begin(&socket);  // Initialize ThingSpeak
+
+  return 0;
 }
 
 void loop() {
 
   int statusCode = 0;
-  
-  // Connect or reconnect to WiFi
-  if(WiFi.status() != WL_CONNECTED){
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(SECRET_SSID);
-    while(WiFi.status() != WL_CONNECTED){
-      WiFi.begin(ssid, pass);
-      Serial.print(".");
-      delay(5000);     
-    } 
-    Serial.println("\nConnected");
-  }
 
-  // Read in field 4 of the public channel recording the temperature
-  float temperatureInF = ThingSpeak.readFloatField(weatherStationChannelNumber, temperatureFieldNumber);  
+  // Read in field 4 of the public channel (temperature)
+  float fTemperatureInF = thingSpeak.readFloatField(weatherStationChannelNumber, temperatureFieldNumber);
 
   // Check the status of the read operation to see if it was successful
-  statusCode = ThingSpeak.getLastReadStatus();
+  statusCode = thingSpeak.getLastReadStatus();
   if(statusCode == 200){
-    Serial.println("Temperature at MathWorks HQ: " + String(temperatureInF) + " deg F");
+    pc.printf("Temperature at MathWorks HQ: %f deg F\n", fTemperatureInF);
+  } else{
+    pc.printf("Problem reading channel. HTTP error code %d\n", statusCode);
   }
-  else{
-    Serial.println("Problem reading channel. HTTP error code " + String(statusCode)); 
-  }
-  
-  delay(15000); // No need to read the temperature too often.
 
-  // Read in field 1 of the private channel which is a counter  
-  long count = ThingSpeak.readLongField(counterChannelNumber, counterFieldNumber, myCounterReadAPIKey);  
+  wait(15); // No need to read the temperature too often.
+
+  // Read in field 1 of the private channel which is a counter
+  long count = thingSpeak.readLongField(counterChannelNumber, counterFieldNumber, myCounterReadAPIKey);
 
    // Check the status of the read operation to see if it was successful
-  statusCode = ThingSpeak.getLastReadStatus();
+  statusCode = thingSpeak.getLastReadStatus();
   if(statusCode == 200){
-    Serial.println("Counter: " + String(count));
+    pc.printf("Counter: %ld\n", count);
   }
   else{
-    Serial.println("Problem reading channel. HTTP error code " + String(statusCode)); 
+    pc.printf("Problem reading channel. HTTP error code %d\n", statusCode);
   }
-  
-  delay(15000); // No need to read the counter too often.
-  
+
+  wait(15); // No need to read the counter too often.
+}
+
+int main() {
+  if(setup() == 0) 
+    while(true) loop();
+  else
+    while(true) wait(1);
 }
  ```
 
