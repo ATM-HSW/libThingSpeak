@@ -8,10 +8,13 @@
   analyze live data streams in the cloud.
 
   Copyright 2018, The MathWorks, Inc.
-            2019, Dr. Olaf Hagendorf, HS Wismar
+            2019-2021, Dr. Olaf Hagendorf, HS Wismar
 
   See the accompaning licence file for licensing information.
 */
+
+//#define THINGSPEAK_DBG_HTTP
+//#define THINGSPEAK_DBG_MSG
 
 #ifdef THINGSPEAK_DBG_MSG
 #define PRINT_DEBUG_MESSAGES
@@ -23,13 +26,13 @@
 #ifndef ThingSpeak_h
 #define ThingSpeak_h
 
-#define TS_VER "1.5.0"
+#define TS_VER "2.0.0"
 
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string>
 #include "mbed.h"
-#include "arduino_WString.h"
 #include "http_request.h"
 
 #define THINGSPEAK_URL "api.thingspeak.com"
@@ -58,16 +61,11 @@
 // Enables an Arduino, ESP8266, ESP32 or other compatible hardware to write or read data to or from ThingSpeak, an open data platform for the Internet of Things with MATLAB analytics and visualization.
 class ThingSpeak
 {
-  private:
-  Serial *serial;
-
   public:
   ThingSpeak() {
     resetWriteFields();
     this->lastReadStatus = OK_SUCCESS;
     this->socket = NULL;
-    this->port = THINGSPEAK_PORT_NUMBER;
-    this->connected = false;
   };
 
 
@@ -88,49 +86,12 @@ class ThingSpeak
 
   */
   bool begin(TCPSocket *socket) {
-    #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::tsBegin\n");
-    #endif
-    this->setSocket(socket);
-    this->setPort(THINGSPEAK_PORT_NUMBER);
-
     resetWriteFields();
     this->lastReadStatus = OK_SUCCESS;
+    this->socket = socket;
 
     return true;
   };
-
-  /*
-  Function: begin
-
-  Summary:
-  Initializes the ThingSpeak library and network settings using the ThingSpeak.com service.
-
-  Parameters:
-  client - EthernetClient, YunClient, TCPClient, or WiFiClient created earlier in the sketch
-  port - TCP port of server
-
-  Returns:
-  Always returns true
-
-  Notes:
-  This does not validate the information passed in, or generate any calls to ThingSpeak.
-
-  */
-  bool begin(TCPSocket *socket, unsigned int port) {
-    #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::tsBegin");
-    #endif
-    this->setSocket(socket);
-    this->setPort(port);
-    resetWriteFields();
-    this->lastReadStatus = OK_SUCCESS;
-    return true;
-  };
-
-  void setSerial(Serial *ser) {
-    this->serial = ser;
-  }
 
   /*
   Function: writeField
@@ -151,9 +112,7 @@ class ThingSpeak
   See getLastReadStatus() for other possible return values.
   */
   int writeField(unsigned long channelNumber, unsigned int field, int value, const char * writeAPIKey) {
-    char valueString[10];  // int range is -32768 to 32768, so 7 bytes including terminator, plus a little extra
-    itoa(value, valueString, 10);
-    return writeField(channelNumber, field, valueString, writeAPIKey);
+    return writeField(channelNumber, field, std::to_string(value), writeAPIKey);
   };
 
 
@@ -176,9 +135,7 @@ class ThingSpeak
   See getLastReadStatus() for other possible return values.
   */
   int writeField(unsigned long channelNumber, unsigned int field, long value, const char * writeAPIKey) {
-    char valueString[15];  // long range is -2147483648 to 2147483647, so 12 bytes including terminator
-    ltoa(value, valueString, 10);
-    return writeField(channelNumber, field, valueString, writeAPIKey);
+    return writeField(channelNumber, field, std::to_string(value), writeAPIKey);
   };
 
   /*
@@ -200,14 +157,7 @@ class ThingSpeak
   See getLastReadStatus() for other possible return values.
   */
   int writeField(unsigned long channelNumber, unsigned int field, float value, const char * writeAPIKey) {
-    #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::writeField (channelNumber: %d writeAPIKey: %s field: %d value: %f)\n", channelNumber, writeAPIKey, field, value);
-    #endif
-    char valueString[20]; // range is -999999000000.00000 to 999999000000.00000, so 19 + 1 for the terminator
-    int status = convertFloatToChar(value, valueString);
-    if(status != OK_SUCCESS) return status;
-
-    return writeField(channelNumber, field, valueString, writeAPIKey);
+    return writeField(channelNumber, field, std::to_string(value), writeAPIKey);
   };
 
 
@@ -230,7 +180,7 @@ class ThingSpeak
   See getLastReadStatus() for other possible return values.
   */
   int writeField(unsigned long channelNumber, unsigned int field, const char * value, const char * writeAPIKey) {
-    return writeField(channelNumber, field, String(value), writeAPIKey);
+    return writeField(channelNumber, field, string(value), writeAPIKey);
   };
 
   /*
@@ -251,7 +201,7 @@ class ThingSpeak
   Notes:
   See getLastReadStatus() for other possible return values.
   */
-  int writeField(unsigned long channelNumber, unsigned int field, String value, const char * writeAPIKey) {
+  int writeField(unsigned long channelNumber, unsigned int field, string value, const char * writeAPIKey) {
     // Invalid field number specified
     if(field < FIELDNUM_MIN || field > FIELDNUM_MAX)
       return ERR_INVALID_FIELD_NUM;
@@ -260,9 +210,12 @@ class ThingSpeak
       return ERR_OUT_OF_RANGE;
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::writeField (channelNumber: %d writeAPIKey: %s field: %d value: \"%s\")\n", channelNumber, writeAPIKey, field, value.c_str());
+      printf("ts::writeField (channelNumber: %lu writeAPIKey: %s field: %d value: \"%s\")\n", channelNumber, writeAPIKey, field, value.c_str());
     #endif
-    String postMessage = String("field") + String(field) + "=" + value;
+    string postMessage = string("field");
+    postMessage +=  std::to_string(field);
+    postMessage += "=";
+    postMessage += value;
     return writeRaw(channelNumber, postMessage, writeAPIKey);
    };
 
@@ -283,10 +236,7 @@ class ThingSpeak
 
   */
   int setField(unsigned int field, int value) {
-    char valueString[10];  // int range is -32768 to 32768, so 7 bytes including terminator
-    itoa(value, valueString, 10);
-
-    return setField(field, valueString);
+    return setField(field, std::to_string(value));
   };
 
   /*
@@ -305,9 +255,7 @@ class ThingSpeak
 
   */
   int setField(unsigned int field, long value) {
-    char valueString[15];  // long range is -2147483648 to 2147483647, so 12 bytes including terminator
-    ltoa(value, valueString, 10);
-    return setField(field, valueString);
+    return setField(field, std::to_string(value));
   };
 
   /*
@@ -326,11 +274,7 @@ class ThingSpeak
 
   */
   int setField(unsigned int field, float value) {
-    char valueString[20]; // range is -999999000000.00000 to 999999000000.00000, so 19 + 1 for the terminator
-    int status = convertFloatToChar(value, valueString);
-    if(status != OK_SUCCESS) return status;
-
-    return setField(field, valueString);
+    return setField(field, std::to_string(value));
   };
 
 
@@ -350,7 +294,7 @@ class ThingSpeak
 
   */
   int setField(unsigned int field, const char * value) {
-    return setField(field, String(value));
+    return setField(field, string(value));
   };
 
 
@@ -362,16 +306,16 @@ class ThingSpeak
 
   Parameters:
   field - Field number (1-8) within the channel to set.
-  value - String to write (UTF8).  ThingSpeak limits this to 255 bytes.
+  value - string to write (UTF8).  ThingSpeak limits this to 255 bytes.
 
   Returns:
   Code of 200 if successful.
   Code of -101 if value is out of range or string is too long (> 255 bytes)
 
   */
-  int setField(unsigned int field, String value) {
+  int setField(unsigned int field, string value) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setField   (field: %d value: \"%s\")\n", field, value.c_str());
+      printf("ts::setField   (field: %d value: \"%s\")\n", field, value.c_str());
     #endif
     if(field < FIELDNUM_MIN || field > FIELDNUM_MAX) return ERR_INVALID_FIELD_NUM;
     // Max # bytes for ThingSpeak field is 255 (UTF-8)
@@ -399,7 +343,7 @@ class ThingSpeak
   */
   int setLatitude(float latitude) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setLatitude(latitude: %f\")\n", latitude);
+      printf("ts::setLatitude(latitude: %f\")\n", latitude);
     #endif
     this->nextWriteLatitude = latitude;
     return OK_SUCCESS;
@@ -424,7 +368,7 @@ class ThingSpeak
   */
   int setLongitude(float longitude) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setLongitude(longitude: %f\")\n", longitude);
+      printf("ts::setLongitude(longitude: %f\")\n", longitude);
     #endif
     this->nextWriteLongitude = longitude;
     return OK_SUCCESS;
@@ -449,7 +393,7 @@ class ThingSpeak
   */
   int setElevation(float elevation) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setElevation(elevation: %f\")\n", elevation);
+      printf("ts::setElevation(elevation: %f\")\n", elevation);
     #endif
     this->nextWriteElevation = elevation;
     return OK_SUCCESS;
@@ -476,7 +420,7 @@ class ThingSpeak
 
   */
   int setStatus(const char * status) {
-    return setStatus(String(status));
+    return setStatus(string(status));
   };
 
 
@@ -499,9 +443,9 @@ class ThingSpeak
   Additonally, status can be used by the ThingTweet App to send a message to Twitter.
 
   */
-  int setStatus(String status) {
+  int setStatus(string status) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setStatus(status: %s\")\n", status.c_str());
+      printf("ts::setStatus(status: %s\")\n", status.c_str());
     #endif
     // Max # bytes for ThingSpeak field is 255 (UTF-8)
     if(status.length() > FIELDLENGTH_MAX)
@@ -530,7 +474,7 @@ class ThingSpeak
   Prior to using this feature, a twitter account must be linked to your ThingSpeak account. Do this by logging into ThingSpeak and going to Apps, then ThingTweet and clicking Link Twitter Account.
   */
   int setTwitterTweet(const char * twitter, const char * tweet) {
-    return setTwitterTweet(String(twitter), String(tweet));
+    return setTwitterTweet(string(twitter), string(tweet));
   };
 
   /*
@@ -551,8 +495,8 @@ class ThingSpeak
   To send a message to twitter call setTwitterTweet() then call writeFields().
   Prior to using this feature, a twitter account must be linked to your ThingSpeak account. Do this by logging into ThingSpeak and going to Apps, then ThingTweet and clicking Link Twitter Account.
   */
-  int setTwitterTweet(String twitter, const char * tweet) {
-    return setTwitterTweet(twitter, String(tweet));
+  int setTwitterTweet(string twitter, const char * tweet) {
+    return setTwitterTweet(twitter, string(tweet));
   };
 
   /*
@@ -573,8 +517,8 @@ class ThingSpeak
   To send a message to twitter call setTwitterTweet() then call writeFields().
   Prior to using this feature, a twitter account must be linked to your ThingSpeak account. Do this by logging into ThingSpeak and going to Apps, then ThingTweet and clicking Link Twitter Account.
   */
-  int setTwitterTweet(const char * twitter, String tweet) {
-    return setTwitterTweet(String(twitter), tweet);
+  int setTwitterTweet(const char * twitter, string tweet) {
+    return setTwitterTweet(string(twitter), tweet);
   };
 
   /*
@@ -595,9 +539,9 @@ class ThingSpeak
   To send a message to twitter call setTwitterTweet() then call writeFields().
   Prior to using this feature, a twitter account must be linked to your ThingSpeak account. Do this by logging into ThingSpeak and going to Apps, then ThingTweet and clicking Link Twitter Account.
   */
-  int setTwitterTweet(String twitter, String tweet) {
+  int setTwitterTweet(string twitter, string tweet) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setTwitterTweet(twitter: %s, tweet: %s\")\n", twitter.c_str(), tweet.c_str());
+      printf("ts::setTwitterTweet(twitter: %s, tweet: %s\")\n", twitter.c_str(), tweet.c_str());
     #endif
     // Max # bytes for ThingSpeak field is 255 (UTF-8)
     if((twitter.length() > FIELDLENGTH_MAX) || (tweet.length() > FIELDLENGTH_MAX))
@@ -629,7 +573,7 @@ class ThingSpeak
 
   */
   int setCreatedAt(const char * createdAt) {
-    return setCreatedAt(String(createdAt));
+    return setCreatedAt(string(createdAt));
   }
 
 
@@ -651,9 +595,9 @@ class ThingSpeak
   If no timezone hour offset parameter is used, UTC time is assumed.
 
   */
-  int setCreatedAt(String createdAt) {
+  int setCreatedAt(string createdAt) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::setCreatedAt(createdAt: %s\")\n", createdAt.c_str());
+      printf("ts::setCreatedAt(createdAt: %s\")\n", createdAt.c_str());
     #endif
 
     // the ISO 8601 format is too complicated to check for valid timestamps here
@@ -697,21 +641,17 @@ class ThingSpeak
   int writeFields(unsigned long channelNumber, const char * writeAPIKey) {
     int status;
 
-    if(!connectThingSpeak()) {
-      // Failed to connect to ThingSpeak
-      return ERR_CONNECT_FAILED;
-    }
-
     // Get the content length of the payload
     int contentLen = getWriteFieldsContentLength();
 
     if(contentLen == 0) {
       // setField was not called before writeFields
+      printf("ERR_SETFIELD_NOT_CALLED\n");
       return ERR_SETFIELD_NOT_CALLED;
     }
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::writeFields   (channelNumber: %d writeAPIKey: %s", channelNumber, writeAPIKey);
+      printf("ts::writeFields   (channelNumber: %lu writeAPIKey: %s", channelNumber, writeAPIKey);
     #endif
 
     // create Post message for thingspeak
@@ -720,16 +660,16 @@ class ThingSpeak
     request->set_header("X-THINGSPEAKAPIKEY", writeAPIKey);
     request->set_header("Content-Type", "application/x-www-form-urlencoded");
 
-    String body;
+    string body = "";
     bool fFirstItem = true;
     for(size_t iField = 0; iField < FIELDNUM_MAX; iField++) {
       if(this->nextWriteField[iField].length() > 0) {
         if(!fFirstItem)
-          body.concat("&");
-        body.concat("field");
-        body.concat((int)(iField + 1));
-        body.concat("=");
-        body.concat(this->nextWriteField[iField]);
+          body += "&";
+        body += "field";
+        body += std::to_string((int)(iField + 1));
+        body += "=";
+        body += this->nextWriteField[iField];
         fFirstItem = false;
       }
     }
@@ -764,73 +704,75 @@ class ThingSpeak
 
     if(this->nextWriteStatus.length() > 0) {
       if(!fFirstItem)
-        body.concat("&");
-      body.concat("status=");
-      body.concat(this->nextWriteStatus);
+        body += "&";
+      body += "status=";
+      body += this->nextWriteStatus;
       fFirstItem = false;
     }
 
     if(this->nextWriteTwitter.length() > 0) {
       if(!fFirstItem)
-        body.concat("&");
-      body.concat("twitter=");
-      body.concat(this->nextWriteTwitter);
+        body += "&";
+      body += "twitter=";
+      body += this->nextWriteTwitter;
       fFirstItem = false;
     }
 
     if(this->nextWriteTweet.length() > 0) {
       if(!fFirstItem)
-        body.concat("&");
-      body.concat("tweet=");
-      body.concat(this->nextWriteTweet);
+        body += "&";
+      body += "tweet=";
+      body += this->nextWriteTweet;
       fFirstItem = false;
     }
 
     if(this->nextWriteCreatedAt.length() > 0) {
       if(!fFirstItem)
-        body.concat("&");
-      body.concat("created_at=");
-      body.concat(this->nextWriteCreatedAt);
+        body += "&";
+      body += "created_at=";
+      body += this->nextWriteCreatedAt;
       fFirstItem = false;
     }
 
-    body.concat("&headers=false");
+    body += "&headers=false";
 
     resetWriteFields();
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               POST \"%s\"\n", body.c_str());
+      printf("               POST \"%s\"\n", body.c_str());
     #endif
 
     HttpResponse* response = request->send(body.c_str(), strlen(body.c_str()));
     #ifdef PRINT_HTTP
-      serial->printf("\n----- HTTP POST response -----\n");
-      serial->printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
+      printf("\n----- HTTP POST response -----\n");
+      printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
 
       printf("Headers:\n");
       for (size_t ix = 0; ix < response->get_headers_length(); ix++) {
-        serial->printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
+        printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
       }
-      serial->printf("\nBody (%d bytes):\n\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
+      printf("\nBody (%d bytes):\n\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
     #endif
 
     status = response->get_status_code();
     if(status != OK_SUCCESS) {
       delete request;
+      printf("get_status_code %d\n", status);
       return status;
     }
 
-    long entryID = String(response->get_body_as_string().c_str()).toInt();
+    long entryID = stoi(response->get_body_as_string());
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               Entry ID \"%s\" (%d)", response->get_body_as_string().c_str(), entryID);
+      printf("               Entry ID \"%s\" (%ld)", response->get_body_as_string().c_str(), entryID);
     #endif
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("disconnected.\n");
+      printf("disconnected.\n");
     #endif
     if(entryID == 0) {
       // ThingSpeak did not accept the write
+      printf("ERR_NOT_INSERTED\n");
       status = ERR_NOT_INSERTED;
     }
 
@@ -868,7 +810,7 @@ class ThingSpeak
 
   */
   int writeRaw(unsigned long channelNumber, const char * postMessage, const char * writeAPIKey) {
-    return writeRaw(channelNumber, String(postMessage), writeAPIKey);
+    return writeRaw(channelNumber, string(postMessage), writeAPIKey);
   };
 
 
@@ -899,20 +841,15 @@ class ThingSpeak
   This is low level functionality that will not be required by most users.
 
   */
-  int writeRaw(unsigned long channelNumber, String postMessage, const char * writeAPIKey) {
+  int writeRaw(unsigned long channelNumber, string postMessage, const char * writeAPIKey) {
     int status;
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::writeRaw   (channelNumber: %d writeAPIKey: %s", channelNumber, writeAPIKey);
+      printf("ts::writeRaw   (channelNumber: %lu writeAPIKey: %s", channelNumber, writeAPIKey);
     #endif
 
-    if(!connectThingSpeak()) {
-      // Failed to connect to ThingSpeak
-      return ERR_CONNECT_FAILED;
-    }
-
     // Post data to thingspeak
-    String body = postMessage + String("&headers=false");
+    string body = postMessage + string("&headers=false");
 
     HttpRequest* request = new HttpRequest(this->socket, HTTP_POST, "http://api.thingspeak.com/update");
     request->set_header("User-Agent", TS_USER_AGENT);
@@ -920,36 +857,35 @@ class ThingSpeak
     request->set_header("Content-Type", "application/x-www-form-urlencoded");
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               POST \"%s\"\n", body.c_str());
+      printf("               POST \"%s\"\n", body.c_str());
     #endif
 
     HttpResponse* response = request->send(body.c_str(), strlen(body.c_str()));
     #ifdef PRINT_HTTP
-      serial->printf("\n----- HTTP POST response -----\n");
-      serial->printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
+      printf("\n----- HTTP POST response -----\n");
+      printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
 
       printf("Headers:\n");
       for (size_t ix = 0; ix < response->get_headers_length(); ix++) {
-        serial->printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
+        printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
       }
-      serial->printf("\nBody (%d bytes):\n\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
+      printf("\nBody (%d bytes):\n\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
     #endif
 
     status = response->get_status_code();
     if(status != OK_SUCCESS) {
-      //this->socket->close();
       delete request;
       return status;
     }
 
-    long entryID = String(response->get_body_as_string().c_str()).toInt();
+    long entryID = stoi(response->get_body_as_string());
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               Entry ID \"%s\" (%d)", response->get_body_as_string().c_str(), entryID);
+      printf("               Entry ID \"%s\" (%ld)", response->get_body_as_string().c_str(), entryID);
     #endif
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("disconnected.\n");
+      printf("disconnected.\n");
     #endif
     if(entryID == 0) {
       // ThingSpeak did not accept the write
@@ -977,19 +913,19 @@ class ThingSpeak
   Value read (UTF8 string), or empty string if there is an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readStringField(unsigned long channelNumber, unsigned int field, const char * readAPIKey) {
+  string readStringField(unsigned long channelNumber, unsigned int field, const char * readAPIKey) {
     if(field < FIELDNUM_MIN || field > FIELDNUM_MAX) {
       this->lastReadStatus = ERR_INVALID_FIELD_NUM;
       return("");
     }
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::readStringField(channelNumber: %d", channelNumber);
+      printf("ts::readStringField(channelNumber: %lu", channelNumber);
       if(NULL != readAPIKey) {
-        serial->printf(" readAPIKey: %s", readAPIKey);
+        printf(" readAPIKey: %s", readAPIKey);
       }
-      serial->printf(" field: %d)\n", field);
+      printf(" field: %d)\n", field);
     #endif
-    return readRaw(channelNumber, String(String("/fields/") + String(field) + String("/last")), readAPIKey);
+    return readRaw(channelNumber, string("/fields/") + std::to_string(field) + string("/last"), readAPIKey);
   }
 
 
@@ -1008,7 +944,7 @@ class ThingSpeak
   Value read (UTF8 string), or empty string if there is an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readStringField(unsigned long channelNumber, unsigned int field) {
+  string readStringField(unsigned long channelNumber, unsigned int field) {
     return readStringField(channelNumber, field, NULL);
   };
 
@@ -1029,7 +965,7 @@ class ThingSpeak
 
   */
   float readFloatField(unsigned long channelNumber, unsigned int field, const char * readAPIKey) {
-    return convertStringToFloat(readStringField(channelNumber, field, readAPIKey));
+    return stof(readStringField(channelNumber, field, readAPIKey));
   };
 
 
@@ -1069,7 +1005,7 @@ class ThingSpeak
   */
   long readLongField(unsigned long channelNumber, unsigned int field, const char * readAPIKey) {
     // Note that although the function is called "toInt" it really returns a long.
-    return readStringField(channelNumber, field, readAPIKey).toInt();
+    return stoi(readStringField(channelNumber, field, readAPIKey));
   }
 
 
@@ -1145,11 +1081,11 @@ class ThingSpeak
   Value read (UTF8 string). An empty string is returned if there was no status written to the channel or in case of an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readStatus(unsigned long channelNumber, const char * readAPIKey) {
-    String content = readRaw(channelNumber, "/feeds/last.txt?status=true", readAPIKey);
+  string readStatus(unsigned long channelNumber, const char * readAPIKey) {
+    string content = readRaw(channelNumber, "/feeds/last.txt?status=true", readAPIKey);
 
     if(getLastReadStatus() != OK_SUCCESS) {
-      return String("");
+      return string("");
     }
 
     return getJSONValueByKey(content, "status");
@@ -1169,7 +1105,7 @@ class ThingSpeak
   Value read (UTF8 string). An empty string is returned if there was no status written to the channel or in case of an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readStatus(unsigned long channelNumber) {
+  string readStatus(unsigned long channelNumber) {
     return readStatus(channelNumber, NULL);
   };
 
@@ -1188,11 +1124,11 @@ class ThingSpeak
   Value read (UTF8 string). An empty string is returned if there was no created-at timestamp written to the channel or in case of an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readCreatedAt(unsigned long channelNumber, const char * readAPIKey) {
-    String content = readRaw(channelNumber, "/feeds/last.txt", readAPIKey);
+  string readCreatedAt(unsigned long channelNumber, const char * readAPIKey) {
+    string content = readRaw(channelNumber, "/feeds/last.txt", readAPIKey);
 
     if(getLastReadStatus() != OK_SUCCESS) {
-      return String("");
+      return string("");
     }
 
     return getJSONValueByKey(content, "created_at");
@@ -1212,7 +1148,7 @@ class ThingSpeak
   Value read (UTF8 string). An empty string is returned if there was no created-at timestamp written to the channel or in case of an error.  Use getLastReadStatus() to get more specific information.
 
   */
-  String readCreatedAt(unsigned long channelNumber) {
+  string readCreatedAt(unsigned long channelNumber) {
     return readCreatedAt(channelNumber, NULL);
   };
 
@@ -1234,7 +1170,7 @@ class ThingSpeak
   This is low level functionality that will not be required by most users.
 
   */
-  String readRaw(unsigned long channelNumber, String URLSuffix) {
+  string readRaw(unsigned long channelNumber, string URLSuffix) {
     return readRaw(channelNumber, URLSuffix, NULL);
   }
 
@@ -1257,24 +1193,19 @@ class ThingSpeak
   This is low level functionality that will not be required by most users.
 
   */
-  String readRaw(unsigned long channelNumber, String URLSuffix, const char * readAPIKey) {
+  string readRaw(unsigned long channelNumber, string URLSuffix, const char * readAPIKey) {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ts::readRaw   (channelNumber: %d", channelNumber);
+      printf("ts::readRaw   (channelNumber: %lu", channelNumber);
       if(NULL != readAPIKey) {
-        serial->printf(" readAPIKey: %s", readAPIKey);
+        printf(" readAPIKey: %s", readAPIKey);
       }
-      serial->printf(" URLSuffix: \"%s\")\n", URLSuffix.c_str());
+      printf(" URLSuffix: \"%s\")\n", URLSuffix.c_str());
     #endif
 
-    if(!connectThingSpeak()) {
-      this->lastReadStatus = ERR_CONNECT_FAILED;
-      return String("");
-    }
-
-    String URL = String("http://api.thingspeak.com/channels/") + String(channelNumber) + URLSuffix;
+    string URL = string("http://api.thingspeak.com/channels/") + std::to_string(channelNumber) + URLSuffix;
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               GET \"%s\"\n", URL.c_str());
+      printf("               GET \"%s\"\n", URL.c_str());
     #endif
 
     // Post data to thingspeak
@@ -1286,32 +1217,32 @@ class ThingSpeak
     const char body[] = "";
     HttpResponse* response = request->send(body, strlen(body));
     #ifdef PRINT_HTTP
-      serial->printf("\n----- HTTP GET response -----\n");
-      serial->printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
+      printf("\n----- HTTP GET response -----\n");
+      printf("Status: %d - %s\n", response->get_status_code(), response->get_status_message().c_str());
 
       printf("Headers:\n");
       for (size_t ix = 0; ix < response->get_headers_length(); ix++) {
-        serial->printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
+        printf("\t%s: %s\n", response->get_headers_fields()[ix]->c_str(), response->get_headers_values()[ix]->c_str());
       }
-      serial->printf("\nBody (%d bytes):\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
+      printf("\nBody (%d bytes):\n%s\n", response->get_body_length(), response->get_body_as_string().c_str());
     #endif
 
     this->lastReadStatus = response->get_status_code();
 
     #ifdef PRINT_DEBUG_MESSAGES
       if(this->lastReadStatus == OK_SUCCESS) {
-        serial->printf("Read: \"%s\"\n", response->get_body_as_string().c_str());
+        printf("Read: \"%s\"\n", response->get_body_as_string().c_str());
       }
     #endif
-    String ret =String(response->get_body_as_string().c_str());
+    string ret =string(response->get_body_as_string().c_str());
     delete request;
 
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("disconnected.\n");
+      printf("disconnected.\n");
     #endif
 
     if(this->lastReadStatus != OK_SUCCESS) {
-      return String("");
+      return string("");
     }
 
     return ret;
@@ -1344,7 +1275,9 @@ class ThingSpeak
   int getLastReadStatus() {
     return this->lastReadStatus;
   };
-private:
+
+  
+  private:
 
   int getWriteFieldsContentLength(){
     size_t iField;
@@ -1367,15 +1300,15 @@ private:
     /*
      * ToDo oh
     if(!isnan(this->nextWriteLatitude)){
-      contentLen = contentLen + 5 + String(this->nextWriteLatitude).length(); // &lat=[value]
+      contentLen = contentLen + 5 + string(this->nextWriteLatitude).length(); // &lat=[value]
     }
 
     if(!isnan(this->nextWriteLongitude)){
-      contentLen = contentLen + 6 + String(this->nextWriteLongitude).length(); // &long=[value]
+      contentLen = contentLen + 6 + string(this->nextWriteLongitude).length(); // &long=[value]
     }
 
     if(!isnan(this->nextWriteElevation)){
-      contentLen = contentLen + 11 + String(this->nextWriteElevation).length(); // &elevation=[value]
+      contentLen = contentLen + 11 + string(this->nextWriteElevation).length(); // &elevation=[value]
     }
     */
 
@@ -1405,33 +1338,32 @@ private:
 
   }
 
-
-  String getJSONValueByKey(String textToSearch, String key) {
+  string getJSONValueByKey(string textToSearch, string key) {
     if(textToSearch.length() == 0) {
-      return String("");
+      return string("");
     }
 
-    String searchPhrase = String("\"") + key + String("\":\"");
+    string searchPhrase = string("\"") + key + string("\":\"");
 
-    int fromPosition = textToSearch.indexOf(searchPhrase,0);
+    int fromPosition = textToSearch.find(searchPhrase);
 
-    if(fromPosition == -1) {
+    if(fromPosition == string::npos) {
       // return because there is no status or it's null
-      return String("");
+      return string("");
     }
 
     fromPosition = fromPosition + searchPhrase.length();
 
-    int toPosition = textToSearch.indexOf("\"", fromPosition);
+    int toPosition = textToSearch.find("\"", fromPosition);
 
-    if(toPosition == -1) {
+    if(toPosition == string::npos) {
       // return because there is no end quote
-      return String("");
+      return string("");
     }
 
-    textToSearch.remove(toPosition);
+    textToSearch.erase(toPosition);
 
-    return textToSearch.substring(fromPosition);
+    return textToSearch.substr(fromPosition);
   }
 
   int abortWriteRaw() {
@@ -1439,80 +1371,13 @@ private:
     return ERR_UNEXPECTED_FAIL;
   }
 
-
-  String abortReadRaw() {
+  string abortReadRaw() {
     #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("ReadRaw abort - disconnected.\n");
+      printf("ReadRaw abort - disconnected.\n");
     #endif
     this->lastReadStatus = ERR_UNEXPECTED_FAIL;
-    return String("");
+    return string("");
   }
-
-  void setPort(unsigned int port) {
-    this->port = port;
-  }
-
-  void setSocket(TCPSocket * socket) {
-    this->socket = socket;
-  }
-
-  TCPSocket *socket;
-  bool connected;
-  unsigned int port;
-  String nextWriteField[8];
-  float nextWriteLatitude;
-  float nextWriteLongitude;
-  float nextWriteElevation;
-  int lastReadStatus;
-  String nextWriteStatus;
-  String nextWriteTwitter;
-  String nextWriteTweet;
-  String nextWriteCreatedAt;
-
-  bool connectThingSpeak() {
-    bool result;
-
-    #ifdef PRINT_DEBUG_MESSAGES
-      serial->printf("               Connect to default ThingSpeak: %s:%d...\n", THINGSPEAK_URL, this->port);
-    #endif
-
-    if(!this->connected)
-      result = socket->connect(THINGSPEAK_URL, this->port);
-
-    if (!result || connected) {
-      #ifdef PRINT_DEBUG_MESSAGES
-        serial->printf("Success.\n");
-      #endif
-      this->connected = true;
-      return true;
-    } else {
-      #ifdef PRINT_DEBUG_MESSAGES
-        serial->printf("Failed (%d).\n", result);
-      #endif
-      return false;
-    }
-  };
-
-  int convertFloatToChar(float value, char *valueString) {
-    // Supported range is -999999000000 to 999999000000
-    if(0 == isinf(value) && (value > 999999000000 || value < -999999000000)) {
-      // Out of range
-      return ERR_OUT_OF_RANGE;
-    }
-    // assume that 5 places right of decimal should be sufficient for most applications
-
-    sprintf(valueString, "%.5f", value);
-    return OK_SUCCESS;
-  };
-
-  float convertStringToFloat(String value) {
-    // There's a bug in the AVR function strtod that it doesn't decode -INF correctly (it maps it to INF)
-    float result = value.toFloat();
-
-    if(1 == isinf(result) && *value.c_str() == '-')
-      result = (float)-INFINITY;
-    return result;
-  };
 
   void resetWriteFields() {
     for(size_t iField = 0; iField < FIELDNUM_MAX; iField++) {
@@ -1526,6 +1391,17 @@ private:
     this->nextWriteTweet = "";
     this->nextWriteCreatedAt = "";
   };
+
+  TCPSocket *socket;
+  string nextWriteField[8];
+  float nextWriteLatitude;
+  float nextWriteLongitude;
+  float nextWriteElevation;
+  int lastReadStatus;
+  string nextWriteStatus;
+  string nextWriteTwitter;
+  string nextWriteTweet;
+  string nextWriteCreatedAt;
 };
 
 extern ThingSpeak thingSpeak;
