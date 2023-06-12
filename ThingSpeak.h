@@ -65,7 +65,7 @@ class ThingSpeak
   ThingSpeak() {
     resetWriteFields();
     this->lastReadStatus = OK_SUCCESS;
-    this->socket = NULL;
+    this->net = NULL;
   };
 
 
@@ -85,10 +85,10 @@ class ThingSpeak
   This does not validate the information passed in, or generate any calls to ThingSpeak.
 
   */
-  bool begin(TCPSocket *socket) {
+  bool begin(NetworkInterface * net) {
     resetWriteFields();
     this->lastReadStatus = OK_SUCCESS;
-    this->socket = socket;
+    this->net = net;
 
     return true;
   };
@@ -654,8 +654,10 @@ class ThingSpeak
       printf("ts::writeFields   (channelNumber: %lu writeAPIKey: %s", channelNumber, writeAPIKey);
     #endif
 
+
+
     // create Post message for thingspeak
-    HttpRequest* request = new HttpRequest(this->socket, HTTP_POST, "http://api.thingspeak.com/update");
+    HttpRequest* request = new HttpRequest(this->net, HTTP_POST, "http://api.thingspeak.com/update");
     request->set_header("User-Agent", TS_USER_AGENT);
     request->set_header("X-THINGSPEAKAPIKEY", writeAPIKey);
     request->set_header("Content-Type", "application/x-www-form-urlencoded");
@@ -851,7 +853,7 @@ class ThingSpeak
     // Post data to thingspeak
     string body = postMessage + string("&headers=false");
 
-    HttpRequest* request = new HttpRequest(this->socket, HTTP_POST, "http://api.thingspeak.com/update");
+    HttpRequest* request = new HttpRequest(this->net, HTTP_POST, "http://api.thingspeak.com/update");
     request->set_header("User-Agent", TS_USER_AGENT);
     request->set_header("X-THINGSPEAKAPIKEY", writeAPIKey);
     request->set_header("Content-Type", "application/x-www-form-urlencoded");
@@ -1209,7 +1211,7 @@ class ThingSpeak
     #endif
 
     // Post data to thingspeak
-    HttpRequest* request = new HttpRequest(this->socket, HTTP_GET, URL.c_str());
+    HttpRequest* request = new HttpRequest(this->net, HTTP_GET, URL.c_str());
     request->set_header("User-Agent", TS_USER_AGENT);
     if(NULL != readAPIKey)
       request->set_header("X-THINGSPEAKAPIKEY", readAPIKey);
@@ -1393,6 +1395,7 @@ class ThingSpeak
   };
 
   TCPSocket *socket;
+  NetworkInterface *net;
   string nextWriteField[8];
   float nextWriteLatitude;
   float nextWriteLongitude;
